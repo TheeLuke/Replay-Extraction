@@ -13,23 +13,23 @@ ALPHA = 3         # Structuring element size for top-hat filter
 P_BINARIZE = 2.5  # Constant for binarization threshold
 L_AVG = 5         # Window length for temporal running average
 T1_OCR_CONF = 0.65 # Confidence threshold (0-1.0) for OCR character recognition
-T2_OCR_CHARS = 15  # Minimum number of recognized characters for SC presence
+T2_OCR_CHARS = 10  # Minimum number of recognized characters for SC presence
 N_GT_MIN_LEN = 7 # Minimum length (frames) for a gradual transition
-N_RL_MIN_DUR = 200 # Minimum duration (frames) for a replay segment 
-N_RU_MAX_DUR = 800 # Maximum duration (frames) for a replay segment 
+N_RL_MIN_DUR = 200 # Minimum duration (frames) for a replay segment
+N_RU_MAX_DUR = 800 # Maximum duration (frames) for a replay segment
 
 # Thresholds for GT detection
 T_L_HIST_DIFF = 0.025 # Lower threshold for successive histogram difference
-T_U_HIST_ACCUM = 5 # Upper threshold for accumulative histogram difference
+T_U_HIST_ACCUM = 3.5 # Upper threshold for accumulative histogram difference
 
 # Histogram Comparison Method
 HIST_COMP_METHOD = cv2.HISTCMP_CHISQR # Options: HISTCMP_CORREL, HISTCMP_BHATTACHARYYA, HISTCMP_CHISQR
 
 # Score Caption (SC) Region of Interest (ROI)
-SC_ROI_Y_START = 0 
-SC_ROI_Y_END = 1080 
-SC_ROI_X_START = 0 
-SC_ROI_X_END = 1920 
+SC_ROI_Y_START = 0
+SC_ROI_Y_END = 1080
+SC_ROI_X_START = 0
+SC_ROI_X_END = 1920
 
 
 #### 1. Frame Extraction
@@ -142,9 +142,11 @@ def detect_gradual_transitions(frames):
         prev_hist = current_hist
         if i % 1000 == 0:
              print(f"  Processed {i} frames for GT detection...")
+        
+    return gt_segments    
 
 
-def identify_candidate_replay_segments(gt_segments, total_frames):
+def identify_candidate_replay_segments(gt_segments):
     print("Identifying Candidate Replay Segments (RSs)...")
     candidate_rs = []
     if len(gt_segments) < 2:
@@ -388,6 +390,86 @@ def evaluate_replay_detection(detected_replays, ground_truth_json_path, total_fr
 
     return results
 
+def export_replays_to_video(replay_segments, all_video_frames, fps, output_path):
+    """
+    Combines frames from specified replay segments into a single video file.
+
+    Args:
+        replay_segments (list): A list of tuples, where each tuple represents a
+                                detected replay segment (start_frame_index, end_frame_index).
+        all_video_frames (list): A list containing all frames (as NumPy arrays)
+                                 extracted from the original video.
+        fps (float): The frames per second of the original video.
+        output_path (str): The full path (including filename and extension, e.g., "replays.mp4")
+                           where the combined replay video will be saved.
+    """
+    print(f"\nExporting {len(replay_segments)} replay segments to: {output_path}")
+
+    if not replay_segments:
+        print("  No replay segments to export.")
+        return
+
+    if not all_video_frames:
+        print("  Error: Cannot export replays, the list of all video frames is empty.")
+        return
+
+    # --- Get frame dimensions from the first frame ---
+    try:
+        height, width, layers = all_video_frames[0].shape
+        frame_size = (width, height)
+    except IndexError:
+        print("  Error: Cannot determine frame size, 'all_video_frames' list seems empty.")
+        return
+    except ValueError:
+         print("  Error: Could not get frame dimensions. Ensure 'all_video_frames' contains valid OpenCV frame arrays.")
+         return
+
+
+    # --- Define the codec and create VideoWriter object ---
+    # Common codecs:
+    # 'mp4v' for .mp4 files (good compatibility)
+    # 'XVID' for .avi files
+    # 'MJPG' for .avi files (larger file size)
+    # Choose based on desired output format in output_path
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Use 'mp4v' for .mp4 output
+    out = cv2.VideoWriter(output_path, fourcc, fps, frame_size)
+
+    if not out.isOpened():
+         print(f"  Error: Could not open VideoWriter for path: {output_path}")
+         print("  Check if the directory exists and if the codec ('mp4v') is supported.")
+         return
+
+    print(f"  VideoWriter initialized (Codec: mp4v, FPS: {fps}, Size: {frame_size})")
+
+    total_frames_written = 0
+    # --- Iterate through each replay segment ---
+    for i, (start, end) in enumerate(replay_segments):
+        print(f"  Writing segment {i+1}/{len(replay_segments)}: Frames {start} to {end}")
+
+        # Validate segment indices
+        if start < 0 or end >= len(all_video_frames) or start > end:
+            print(f"    Warning: Skipping invalid segment indices [{start}, {end}].")
+            continue
+
+        # --- Iterate through frames within the segment ---
+        for frame_index in range(start, end + 1):
+            try:
+                frame = all_video_frames[frame_index]
+                # Ensure frame is valid before writing
+                if frame is not None and frame.shape[0] == height and frame.shape[1] == width:
+                     out.write(frame)
+                     total_frames_written += 1
+                else:
+                     print(f"    Warning: Skipping invalid or mismatched frame at index {frame_index}.")
+            except IndexError:
+                 print(f"    Warning: Frame index {frame_index} out of bounds for 'all_video_frames'. Stopping segment.")
+                 break # Stop processing this segment if an index is bad
+
+    # --- Release the VideoWriter ---
+    out.release()
+    print(f"\nFinished exporting. Total frames written: {total_frames_written}")
+    print(f"Replay video saved to: {output_path}")
+
 #################################
 #### Replay Extraction Model ####
 #################################
@@ -395,6 +477,7 @@ def evaluate_replay_detection(detected_replays, ground_truth_json_path, total_fr
 if __name__ == "__main__":
     video_file = "test1.mp4"
     ground_truth_file = "ground_truth_annotations.json"
+    output_replay_video = "test1_replays.mp4"
 
     if not os.path.exists(video_file):
          print(f"FATAL ERROR: Video file not found at {video_file}")
@@ -415,7 +498,7 @@ if __name__ == "__main__":
     gt_segments = detect_gradual_transitions(all_frames)
 
     # 3. Identify Candidate Replay Segments
-    candidate_segments = identify_candidate_replay_segments(gt_segments, total_video_frames)
+    candidate_segments = identify_candidate_replay_segments(gt_segments)
 
     # 4. Detect Score Caption Absence in Candidates
     final_replay_segments = []
@@ -435,7 +518,7 @@ if __name__ == "__main__":
                  print("  Skipping candidate segment: No frames extracted for these indices.")
                  continue
 
-            is_sc_absent = detect_score_caption_absence(segment_frames, start)
+            is_sc_absent = detect_score_caption_absence(segment_frames)
 
             if is_sc_absent:
                 print(f"  --> RESULT: SC Absent. Adding segment [{start}, {end}] as Final Replay.")
@@ -457,5 +540,16 @@ if __name__ == "__main__":
              print("\nEvaluation completed successfully.")
     else:
         print(f"\nSkipping evaluation step.")
+
+    if final_replay_segments and all_frames and video_fps > 0:
+        export_replays_to_video(
+            replay_segments=final_replay_segments,
+            all_video_frames=all_frames,
+            fps=video_fps,
+            output_path=output_replay_video
+        )
+    else:
+        print("\nSkipping replay export: No replays detected or frame data missing.")
+
 
     print("\nProcessing finished.")
