@@ -5,17 +5,9 @@ import json
 from sklearn.metrics import precision_score, recall_score, accuracy_score, confusion_matrix
 import os
 
-try:
-    # This will exist if running via kernprof
-    profile
-except NameError:
-    # Create a dummy profile decorator if not running kernprof
-    # This allows the script to run normally without the profiler
-    def profile(func):
-        return func
-
 ##### Configuration
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' #
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
 #### Parameters
 ALPHA = 3         # Structuring element size for top-hat filter
 P_BINARIZE = 2.5  # Constant for binarization threshold
@@ -41,7 +33,6 @@ SC_ROI_X_END = 1920
 
 
 #### 1. Frame Extraction
-@profile # Added profiler decorator
 def extract_frames(video_path):
     """Extracts frames from a video file."""
     print(f"Extracting frames from: {video_path}")
@@ -67,7 +58,6 @@ def extract_frames(video_path):
     return frames, fps
 
 #### 2. SC Preprocessing
-@profile # Added profiler decorator
 def preprocess_frame_for_sc(frame):
     """Performs preprocessing steps on a single frame for SC detection."""
     # Grayscale conversion
@@ -94,7 +84,6 @@ def preprocess_frame_for_sc(frame):
     return illum_adjusted
 
 #### GT Detection
-@profile # Added profiler decorator
 def detect_gradual_transitions(frames):
     print("Detecting Gradual Transitions (GTs)...")
     print(f"  Using Hist Comparison: {HIST_COMP_METHOD}, T_L: {T_L_HIST_DIFF}, T_U: {T_U_HIST_ACCUM}")
@@ -127,51 +116,36 @@ def detect_gradual_transitions(frames):
         if is_potential_start: # Potential start of GT
             if potential_gt_start == -1:
                 potential_gt_start = i - 1
-                # print(f"  Potential GT start at frame {potential_gt_start} (Diff: {successive_diff:.4f})")
+                print(f"  Potential GT start at frame {potential_gt_start} (Diff: {successive_diff:.4f})")
             # Accumulate difference during potential GT
             accum_hist_diff += successive_diff
         else:
              # If we were in a potential GT and the difference drops below threshold again
             if potential_gt_start != -1:
-                # print(f"  Potential GT end near frame {i-1} (Diff: {successive_diff:.4f}, Accum Diff: {accum_hist_diff:.4f})")
+                print(f"  Potential GT end near frame {i-1} (Diff: {successive_diff:.4f}, Accum Diff: {accum_hist_diff:.4f})")
                 # Check if accumulated difference exceeds TU
                 if accum_hist_diff > T_U_HIST_ACCUM:
                     gt_end = i - 1
                     # Check if GT duration is sufficient
                     if (gt_end - potential_gt_start + 1) >= N_GT_MIN_LEN:
                         gt_segments.append((potential_gt_start, gt_end))
-                        # print(f"    --> Detected GT: Frames {potential_gt_start} to {gt_end} (Duration: {gt_end - potential_gt_start + 1}, AccumDiff: {accum_hist_diff:.4f})")
-                    # else:
-                         # print(f"    --> Discarded GT: Too short (Duration {gt_end - potential_gt_start + 1} < {N_GT_MIN_LEN})")
-                # else:
-                     # print(f"    --> Discarded GT: AccumDiff {accum_hist_diff:.4f} <= {T_U_HIST_ACCUM}")
+                        print(f"    --> Detected GT: Frames {potential_gt_start} to {gt_end} (Duration: {gt_end - potential_gt_start + 1}, AccumDiff: {accum_hist_diff:.4f})")
+                    else:
+                         print(f"    --> Discarded GT: Too short (Duration {gt_end - potential_gt_start + 1} < {N_GT_MIN_LEN})")
+                else:
+                     print(f"    --> Discarded GT: AccumDiff {accum_hist_diff:.4f} <= {T_U_HIST_ACCUM}")
 
                 # Reset regardless of whether it met TU threshold
                 potential_gt_start = -1
                 accum_hist_diff = 0
 
         prev_hist = current_hist
-        # if i % 1000 == 0:
-        #      print(f"  Processed {i} frames for GT detection...")
-
-    # Handle potential GT ending at the last frame
-    if potential_gt_start != -1:
-        # print(f"  Potential GT end near frame {len(frames)-1} (Accum Diff: {accum_hist_diff:.4f})")
-        if accum_hist_diff > T_U_HIST_ACCUM:
-            gt_end = len(frames) - 1
-            if (gt_end - potential_gt_start + 1) >= N_GT_MIN_LEN:
-                gt_segments.append((potential_gt_start, gt_end))
-                # print(f"    --> Detected GT: Frames {potential_gt_start} to {gt_end} (Duration: {gt_end - potential_gt_start + 1}, AccumDiff: {accum_hist_diff:.4f})") 
-            # else:
-                # print(f"    --> Discarded GT: Too short (Duration {gt_end - potential_gt_start + 1} < {N_GT_MIN_LEN})")
-        # else:
-            # print(f"    --> Discarded GT: AccumDiff {accum_hist_diff:.4f} <= {T_U_HIST_ACCUM}")
-
-    print(f"Finished GT detection. Found {len(gt_segments)} segments.")
-    return gt_segments
+        if i % 1000 == 0:
+             print(f"  Processed {i} frames for GT detection...")
+        
+    return gt_segments    
 
 
-@profile # Added profiler decorator
 def identify_candidate_replay_segments(gt_segments):
     print("Identifying Candidate Replay Segments (RSs)...")
     candidate_rs = []
@@ -193,72 +167,58 @@ def identify_candidate_replay_segments(gt_segments):
         # Check if segment exists (gt2 must start after gt1 ends)
         if actual_replay_content_start <= actual_replay_content_end:
              actual_replay_duration = actual_replay_content_end - actual_replay_content_start + 1
-             # print(f"  Considering segment between GTs: Frames {actual_replay_content_start}-{actual_replay_content_end}, Duration: {actual_replay_duration}")
+             print(f"  Considering segment between GTs: Frames {actual_replay_content_start}-{actual_replay_content_end}, Duration: {actual_replay_duration}")
 
              # Check if the duration of the content *between* GTs fits replay limits
              if N_RL_MIN_DUR <= actual_replay_duration <= N_RU_MAX_DUR:
                   candidate_rs.append((actual_replay_content_start, actual_replay_content_end))
-                  # print(f"    -> Added as Candidate RS.")
-             # else:
-                  # print(f"    -> Discarded (Duration {actual_replay_duration} outside [{N_RL_MIN_DUR}, {N_RU_MAX_DUR}])")
-        # else:
-             # print(f"  Skipping segment between GTs {i} ({gt1_end}) and {i+1} ({gt2_start}): End is not after Start.")
+                  print(f"    -> Added as Candidate RS.")
+             else:
+                  print(f"    -> Discarded (Duration {actual_replay_duration} outside [{N_RL_MIN_DUR}, {N_RU_MAX_DUR}])")
+        else:
+             print(f"  Skipping segment between GTs {i} ({gt1_end}) and {i+1} ({gt2_start}): End is not after Start.")
 
 
     print(f"Finished candidate RS identification. Found {len(candidate_rs)} candidates.")
     return candidate_rs
 
 #### SC Detection
-@profile # Added profiler decorator
 def detect_score_caption_absence(frames_segment):
     if not frames_segment:
         print("    Segment has no frames, assuming SC absent.")
         return True # No frames means no SC
 
-    # Preprocessing moved inside the loop to avoid storing all processed frames if memory is a concern
-    # processed_frames = [preprocess_frame_for_sc(f) for f in frames_segment] # Original line
+    processed_frames = [preprocess_frame_for_sc(f) for f in frames_segment]
 
     # Temporal Running Averaging
     avg_images = []
-    num_frames = len(frames_segment)
+    num_frames = len(processed_frames)
     for i in range(num_frames):
         start = max(0, i - L_AVG // 2)
         end = min(num_frames, i + L_AVG // 2 + 1)
+        window = processed_frames[start:end]
+        # Filter out None values if preprocessing failed for some frames
+        valid_window = [img for img in window if img is not None and img.size > 0]
 
-        # Process frames within the window on-demand
-        window_processed = []
-        for k in range(start, end):
-            processed_f = preprocess_frame_for_sc(frames_segment[k])
-            if processed_f is not None and processed_f.size > 0:
-                window_processed.append(processed_f)
-
-
-        # # Filter out None values if preprocessing failed for some frames
-        # valid_window = [img for img in window if img is not None and img.size > 0] # Original code used pre-processed list
-
-        if window_processed:
+        if valid_window:
             # Ensure all frames in window have same dimensions before averaging
-            h, w = window_processed[0].shape
-            consistent_window = [img for img in window_processed if img.shape == (h, w)]
+            h, w = valid_window[0].shape
+            consistent_window = [img for img in valid_window if img.shape == (h, w)]
             if consistent_window:
                  avg_img = np.mean(np.array(consistent_window, dtype=np.float32), axis=0).astype(np.uint8)
                  avg_images.append(avg_img)
+            elif processed_frames[i] is not None: # Fallback if window is invalid
+                 avg_images.append(processed_frames[i])
             else:
-                 # Fallback: Use the center frame if processed, otherwise None
-                 center_processed = preprocess_frame_for_sc(frames_segment[i])
-                 avg_images.append(center_processed if center_processed is not None and center_processed.size > 0 else None)
-
+                 avg_images.append(None) # Add placeholder if center frame is invalid
         else:
-             # Fallback: Use the center frame if processed, otherwise None
-             center_processed = preprocess_frame_for_sc(frames_segment[i])
-             avg_images.append(center_processed if center_processed is not None and center_processed.size > 0 else None)
-
+             avg_images.append(processed_frames[i]) # Fallback if window is empty
 
     sc_detected_in_segment = False
-    # print(f"    Applying OCR to ROI [{SC_ROI_Y_START}:{SC_ROI_Y_END}, {SC_ROI_X_START}:{SC_ROI_X_END}] with T1={T1_OCR_CONF}, T2={T2_OCR_CHARS}")
+    print(f"    Applying OCR to ROI [{SC_ROI_Y_START}:{SC_ROI_Y_END}, {SC_ROI_X_START}:{SC_ROI_X_END}] with T1={T1_OCR_CONF}, T2={T2_OCR_CHARS}")
     for i, avg_img in enumerate(avg_images):
         if avg_img is None:
-            # print(f"    Skipping OCR for frame {i}: Invalid average image.")
+            print(f"    Skipping OCR for frame {i}: Invalid average image.")
             continue # Skip if averaging failed
 
         # Image Binarization using mean and std dev
@@ -285,7 +245,7 @@ def detect_score_caption_absence(frames_segment):
         x_end = min(roi_w, SC_ROI_X_END)
 
         if y_start >= y_end or x_start >= x_end:
-             # print(f"    Warning: Invalid ROI dimensions for frame {i} after clamping. Skipping OCR.")
+             print(f"    Warning: Invalid ROI dimensions for frame {i} after clamping. Skipping OCR.")
              continue
 
         roi_img = binary_img[y_start:y_end, x_start:x_end]
@@ -293,7 +253,7 @@ def detect_score_caption_absence(frames_segment):
 
 
         if roi_img.size == 0:
-             # print(f"    Warning: ROI image is empty for frame {i}. Skipping OCR.")
+             print(f"    Warning: ROI image is empty for frame {i}. Skipping OCR.")
              continue
 
         try:
@@ -326,15 +286,14 @@ def detect_score_caption_absence(frames_segment):
             avg_confidence_norm = (sum_confidence / num_confident_chars) / 100.0 if num_confident_chars > 0 else 0.0
 
             # Debug print OCR results for this frame
-            # if num_chars_recognized > 0:
-                 # print(f"      Frame {i}: OCR found: '{' '.join(recognized_texts)}' (Chars: {num_chars_recognized}, Confident Chars: {num_confident_chars}, AvgConf: {avg_confidence_norm:.2f})")
+            if num_chars_recognized > 0:
+                 print(f"      Frame {i}: OCR found: '{' '.join(recognized_texts)}' (Chars: {num_chars_recognized}, Confident Chars: {num_confident_chars}, AvgConf: {avg_confidence_norm:.2f})")
 
             # Decision: SC present if enough chars recognized meeting confidence threshold
             # We check if the count of *confident* characters meets T2
             if num_confident_chars >= T2_OCR_CHARS:
-                 # print(f"    --> Frame {i}: SC DETECTED (Confident Chars {num_confident_chars} >= {T2_OCR_CHARS})"
+                 print(f"    --> Frame {i}: SC DETECTED (Confident Chars {num_confident_chars} >= {T2_OCR_CHARS})")
                  sc_detected_in_segment = True
-
                  break # If SC found in any frame, the segment is not a replay
 
         except pytesseract.TesseractNotFoundError:
@@ -347,14 +306,14 @@ def detect_score_caption_absence(frames_segment):
             pass # Continue processing other frames
 
     # Final decision for the segment
-    # if sc_detected_in_segment:
-    #      print("    Segment Result: SC DETECTED in at least one frame.")
-    # else:
-    #      print("    Segment Result: SC Absent in all processed frames.")
-    return not sc_detected_in_segment # Return True if SC Absent
+    if sc_detected_in_segment:
+         print("    Segment Result: SC DETECTED in at least one frame.")
+         return False # SC Present
+    else:
+         print("    Segment Result: SC Absent in all processed frames.")
+         return True # SC Absent
 
 #### Results Evaluation
-@profile # Added profiler decorator
 def evaluate_replay_detection(detected_replays, ground_truth_json_path, total_frames):
     """Evaluates the performance of the replay detection against ground truth."""
     print(f"\nEvaluating performance against: {ground_truth_json_path}")
@@ -378,7 +337,7 @@ def evaluate_replay_detection(detected_replays, ground_truth_json_path, total_fr
     print("Processing Ground Truth Segments:")
     for start, end in gt_replays:
         start, end = int(start), int(end)
-        # print(f"  GT Segment: {start} - {end}")
+        print(f"  GT Segment: {start} - {end}")
         if 0 <= start < total_frames and 0 <= end < total_frames and start <= end:
             y_true[start : end + 1] = 1
         else:
@@ -388,22 +347,13 @@ def evaluate_replay_detection(detected_replays, ground_truth_json_path, total_fr
     print("Processing Detected Segments:")
     for start, end in detected_replays:
          start, end = int(start), int(end)
-         # print(f"  Detected Segment: {start} - {end}")
+         print(f"  Detected Segment: {start} - {end}")
          if 0 <= start < total_frames and 0 <= end < total_frames and start <= end:
              y_pred[start : end + 1] = 1
          else:
              print(f"  Warning: Detected segment [{start}, {end}] out of bounds or invalid (Total frames: {total_frames}). Skipping.")
 
-    # Handle case where either y_true or y_pred is all zeros or all ones to avoid errors in confusion_matrix
-    if len(np.unique(y_true)) < 2 or len(np.unique(y_pred)) < 2:
-         # Simplified calculation if confusion matrix would fail
-         tp = np.sum((y_pred == 1) & (y_true == 1))
-         tn = np.sum((y_pred == 0) & (y_true == 0))
-         fp = np.sum((y_pred == 1) & (y_true == 0))
-         fn = np.sum((y_pred == 0) & (y_true == 1))
-    else:
-        tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
 
     precision = precision_score(y_true, y_pred, labels=[0, 1], pos_label=1, zero_division=0)
     recall = recall_score(y_true, y_pred, labels=[0, 1], pos_label=1, zero_division=0)
@@ -440,7 +390,6 @@ def evaluate_replay_detection(detected_replays, ground_truth_json_path, total_fr
 
     return results
 
-@profile # Added profiler decorator
 def export_replays_to_video(replay_segments, all_video_frames, fps, output_path):
     """
     Combines frames from specified replay segments into a single video file.
@@ -466,7 +415,7 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
 
     # --- Get frame dimensions from the first frame ---
     try:
-        height, width, weight = all_video_frames[0].shape
+        height, width, layers = all_video_frames[0].shape
         frame_size = (width, height)
     except IndexError:
         print("  Error: Cannot determine frame size, 'all_video_frames' list seems empty.")
@@ -482,7 +431,7 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
     # 'XVID' for .avi files
     # 'MJPG' for .avi files (larger file size)
     # Choose based on desired output format in output_path
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Use 'mp4v' for .mp4 output
     out = cv2.VideoWriter(output_path, fourcc, fps, frame_size)
 
     if not out.isOpened():
@@ -525,8 +474,11 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
 #### Replay Extraction Model ####
 #################################
 
-@profile
-def run_replay_extraction(video_file, ground_truth_file, output_replay_video):
+if __name__ == "__main__":
+    video_file = "test1.mp4"
+    ground_truth_file = "ground_truth_annotations.json"
+    output_replay_video = "test1_replays.mp4"
+
     if not os.path.exists(video_file):
          print(f"FATAL ERROR: Video file not found at {video_file}")
          exit()
@@ -561,24 +513,18 @@ def run_replay_extraction(video_file, ground_truth_file, output_replay_video):
                  print(f"  Skipping invalid candidate segment indices: {start}-{end}")
                  continue
 
-            # Check if segment frame indices are valid before slicing
-            if start > end or start >= total_video_frames or end >= total_video_frames:
-                print(f"  Skipping invalid segment frame indices: {start}-{end}")
-                continue
-
             segment_frames = all_frames[start : end + 1]
             if not segment_frames:
                  print("  Skipping candidate segment: No frames extracted for these indices.")
                  continue
 
-            is_sc_absent = detect_score_caption_absence(segment_frames) # Returns True if absent
+            is_sc_absent = detect_score_caption_absence(segment_frames)
 
-            if is_sc_absent: # If True (absent), it's a replay
+            if is_sc_absent:
                 print(f"  --> RESULT: SC Absent. Adding segment [{start}, {end}] as Final Replay.")
                 final_replay_segments.append((start, end))
-            else: # If False (present), discard
+            else:
                 print(f"  --> RESULT: SC Present. Discarding segment [{start}, {end}].")
-
 
     print(f"\nFinished SC detection. Identified {len(final_replay_segments)} final replay segments:")
     if final_replay_segments:
@@ -607,11 +553,3 @@ def run_replay_extraction(video_file, ground_truth_file, output_replay_video):
 
 
     print("\nProcessing finished.")
-
-
-if __name__ == "__main__":
-    video_file = "test1.mp4" # Replace with your video file
-    ground_truth_file = "ground_truth_annotations.json" # Replace with your annotations file
-    output_replay_video = "test1_replays.mp4" # Replace with desired output file
-
-    run_replay_extraction(video_file, ground_truth_file, output_replay_video)
