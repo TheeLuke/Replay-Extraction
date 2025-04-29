@@ -4,6 +4,7 @@ import pytesseract
 import json
 from sklearn.metrics import precision_score, recall_score, accuracy_score, confusion_matrix
 import os
+import time
 
 ##### Configuration
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -12,10 +13,10 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 ALPHA = 3         # Structuring element size for top-hat filter
 P_BINARIZE = 2.5  # Constant for binarization threshold
 L_AVG = 5         # Window length for temporal running average
-T1_OCR_CONF = 0.65 # Confidence threshold (0-1.0) for OCR character recognition
-T2_OCR_CHARS = 10  # Minimum number of recognized characters for SC presence
+T1_OCR_CONF = 0.75 # Confidence threshold (0-1.0) for OCR character recognition
+T2_OCR_CHARS = 3 # Minimum number of recognized characters for SC presence
 N_GT_MIN_LEN = 7 # Minimum length (frames) for a gradual transition
-N_RL_MIN_DUR = 200 # Minimum duration (frames) for a replay segment
+N_RL_MIN_DUR = 235 # Minimum duration (frames) for a replay segment
 N_RU_MAX_DUR = 800 # Maximum duration (frames) for a replay segment
 
 # Thresholds for GT detection
@@ -257,9 +258,8 @@ def detect_score_caption_absence(frames_segment):
              continue
 
         try:
-            # Use psm 6 assuming a single uniform block of text
-            # want to test with psm 7 though
-            ocr_data = pytesseract.image_to_data(roi_img, lang='eng', config='--psm 6', output_type=pytesseract.Output.DICT)
+            # tried using psm-6, got better results using psm-7 but I think some refining still needs to be done to OCR for better performance.
+            ocr_data = pytesseract.image_to_data(roi_img, lang='eng', config='--psm 7', output_type=pytesseract.Output.DICT)
             num_chars_recognized = 0
             sum_confidence = 0
             num_confident_chars = 0
@@ -413,7 +413,6 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
         print("  Error: Cannot export replays, the list of all video frames is empty.")
         return
 
-    # --- Get frame dimensions from the first frame ---
     try:
         height, width, layers = all_video_frames[0].shape
         frame_size = (width, height)
@@ -424,14 +423,7 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
          print("  Error: Could not get frame dimensions. Ensure 'all_video_frames' contains valid OpenCV frame arrays.")
          return
 
-
-    # --- Define the codec and create VideoWriter object ---
-    # Common codecs:
-    # 'mp4v' for .mp4 files (good compatibility)
-    # 'XVID' for .avi files
-    # 'MJPG' for .avi files (larger file size)
-    # Choose based on desired output format in output_path
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Use 'mp4v' for .mp4 output
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v') # 'mp4v' for .mp4 output
     out = cv2.VideoWriter(output_path, fourcc, fps, frame_size)
 
     if not out.isOpened():
@@ -442,7 +434,6 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
     print(f"  VideoWriter initialized (Codec: mp4v, FPS: {fps}, Size: {frame_size})")
 
     total_frames_written = 0
-    # --- Iterate through each replay segment ---
     for i, (start, end) in enumerate(replay_segments):
         print(f"  Writing segment {i+1}/{len(replay_segments)}: Frames {start} to {end}")
 
@@ -451,7 +442,6 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
             print(f"    Warning: Skipping invalid segment indices [{start}, {end}].")
             continue
 
-        # --- Iterate through frames within the segment ---
         for frame_index in range(start, end + 1):
             try:
                 frame = all_video_frames[frame_index]
@@ -465,7 +455,6 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
                  print(f"    Warning: Frame index {frame_index} out of bounds for 'all_video_frames'. Stopping segment.")
                  break # Stop processing this segment if an index is bad
 
-    # --- Release the VideoWriter ---
     out.release()
     print(f"\nFinished exporting. Total frames written: {total_frames_written}")
     print(f"Replay video saved to: {output_path}")
@@ -475,72 +464,98 @@ def export_replays_to_video(replay_segments, all_video_frames, fps, output_path)
 #################################
 
 if __name__ == "__main__":
-    video_file = "test1.mp4"
-    ground_truth_file = "ground_truth_annotations.json"
-    output_replay_video = "test1_replays.mp4"
+    video_file = "test1.mp4" # INPUT: Replace with your video file path
+    ground_truth_file = "ground_truth_annotations.json" # INPUT: Replace with your annotations file path
+    output_replay_video = "test1_replays_cuda.mp4" # INPUT: Desired output video file path
+
+    # --- Record start time ---
+    start_time = time.time()
 
     if not os.path.exists(video_file):
          print(f"FATAL ERROR: Video file not found at {video_file}")
          exit()
-    if not os.path.exists(ground_truth_file):
+
+    perform_evaluation = os.path.exists(ground_truth_file)
+    if not perform_evaluation:
         print(f"WARNING: Ground truth file not found at {ground_truth_file}. Evaluation will be skipped.")
-        perform_evaluation = False
-    else:
-        perform_evaluation = True
 
     # 1. Extract Frames
     all_frames, video_fps = extract_frames(video_file)
     if not all_frames:
         exit()
     total_video_frames = len(all_frames)
+    # --- Time after extraction ---
+    extract_end_time = time.time()
+    print(f"Frame Extraction Time: {extract_end_time - start_time:.2f} seconds")
 
     # 2. Detect Gradual Transitions
     gt_segments = detect_gradual_transitions(all_frames)
+    # --- Time after GT detection ---
+    gt_detect_end_time = time.time()
+    print(f"GT Detection Time: {gt_detect_end_time - extract_end_time:.2f} seconds")
+
 
     # 3. Identify Candidate Replay Segments
     candidate_segments = identify_candidate_replay_segments(gt_segments)
+    # --- Time after candidate identification ---
+    candidate_id_end_time = time.time()
+    print(f"Candidate Identification Time: {candidate_id_end_time - gt_detect_end_time:.2f} seconds")
 
     # 4. Detect Score Caption Absence in Candidates
     final_replay_segments = []
     print("\nDetecting Score Caption (SC) Absence in candidates...")
+    # --- Time before SC detection loop ---
+    sc_detection_start_time = time.time()
     if not candidate_segments:
         print("  No candidate segments found. Skipping SC detection.")
     else:
         for i, (start, end) in enumerate(candidate_segments):
-            print(f"\n--- Processing Candidate RS {i+1}/{len(candidate_segments)}: Frames {start} to {end} ---")
-            # Ensure indices are within bounds
-            if start < 0 or end >= total_video_frames or start > end:
+            # print(f"\n--- Processing Candidate RS {i+1}/{len(candidate_segments)}: Frames {start} to {end} ---") # Profiler cleanup
+            if not (0 <= start < total_video_frames and 0 <= end < total_video_frames and start <= end):
                  print(f"  Skipping invalid candidate segment indices: {start}-{end}")
                  continue
 
             segment_frames = all_frames[start : end + 1]
             if not segment_frames:
-                 print("  Skipping candidate segment: No frames extracted for these indices.")
+                 print("  Skipping candidate segment: No frames extracted.")
                  continue
 
             is_sc_absent = detect_score_caption_absence(segment_frames)
 
             if is_sc_absent:
-                print(f"  --> RESULT: SC Absent. Adding segment [{start}, {end}] as Final Replay.")
+                # print(f"  --> RESULT: SC Absent. Adding segment [{start}, {end}] as Final Replay.") # Profiler cleanup
                 final_replay_segments.append((start, end))
-            else:
-                print(f"  --> RESULT: SC Present. Discarding segment [{start}, {end}].")
+            # else: # Profiler cleanup
+            #     print(f"  --> RESULT: SC Present. Discarding segment [{start}, {end}].") # Profiler cleanup
 
-    print(f"\nFinished SC detection. Identified {len(final_replay_segments)} final replay segments:")
+    # --- Time after SC detection loop ---
+    sc_detection_end_time = time.time()
+    print(f"\nFinished SC detection. Identified {len(final_replay_segments)} final replay segments.")
+    print(f"SC Detection Time: {sc_detection_end_time - sc_detection_start_time:.2f} seconds")
     if final_replay_segments:
-        for start, end in final_replay_segments:
-             print(f"  - Replay: Frames {start} to {end}")
+        # for start, end in final_replay_segments: # Profiler cleanup
+        #      print(f"  - Replay: Frames {start} to {end}") # Profiler cleanup
+        pass # Keep structure
     else:
         print("  No final replay segments identified.")
 
 
+    # 5. Evaluation
+    # --- Time before evaluation ---
+    eval_start_time = time.time()
     if perform_evaluation:
         evaluation_metrics = evaluate_replay_detection(final_replay_segments, ground_truth_file, total_video_frames)
         if evaluation_metrics:
              print("\nEvaluation completed successfully.")
     else:
         print(f"\nSkipping evaluation step.")
+    # --- Time after evaluation ---
+    eval_end_time = time.time()
+    if perform_evaluation: print(f"Evaluation Time: {eval_end_time - eval_start_time:.2f} seconds")
 
+    # 6. Export Video
+    # --- Time before export ---
+    export_start_time = time.time()
     if final_replay_segments and all_frames and video_fps > 0:
         export_replays_to_video(
             replay_segments=final_replay_segments,
@@ -550,6 +565,11 @@ if __name__ == "__main__":
         )
     else:
         print("\nSkipping replay export: No replays detected or frame data missing.")
+    # --- Time after export ---
+    export_end_time = time.time()
+    if final_replay_segments: print(f"Export Time: {export_end_time - export_start_time:.2f} seconds")
 
 
-    print("\nProcessing finished.")
+    # --- Record total end time ---
+    total_end_time = time.time()
+    print(f"\nProcessing finished. Total execution time: {total_end_time - start_time:.2f} seconds")
