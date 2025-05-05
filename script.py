@@ -1,4 +1,5 @@
 import cv2
+import cv2.version
 import numpy as np
 import pytesseract
 import json
@@ -573,3 +574,4 @@ if __name__ == "__main__":
     # --- Record total end time ---
     total_end_time = time.time()
     print(f"\nProcessing finished. Total execution time: {total_end_time - start_time:.2f} seconds")
+    

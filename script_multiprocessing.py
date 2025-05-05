@@ -17,7 +17,7 @@ import traceback # For detailed error logging
 # !! IMPORTANT !! Update this path to your Tesseract installation
 TESSERACT_CMD = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 # Define Input/Output Files (Update these paths as needed)
-VIDEO_FILE_IN = "test1.mp4"
+VIDEO_FILE_IN = "test2.mp4"
 GROUND_TRUTH_FILE_IN = "ground_truth_annotations.json" # Optional, for evaluation
 OUTPUT_REPLAY_VIDEO_OUT = "test1_replays_streamed.mp4"
 # -------------------------
